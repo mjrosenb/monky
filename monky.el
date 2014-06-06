@@ -47,9 +47,8 @@
   :group 'monky
   :type '(repeat string))
 
-;; TODO
 (defcustom monky-save-some-buffers t
-  "Non-nil means that \\[monky-status] will save modified buffers before running.
+  "Non-nil means that \\[monky-status] \\[monky-refresh], \\[monky-qpush], \\[monky-qpop] will save modified buffers before running.
 Setting this to t will ask which buffers to save, setting it to 'dontask will
 save all modified buffers without asking."
   :group 'monky
@@ -1000,6 +999,11 @@ IF FLAG-OR-FUNC is a Boolean value, the section will be hidden if its true, show
     (save-excursion
       (monky-for-all-buffers (lambda ()
                                (setq mode-line-process pr))))))
+
+
+(defun monky-do-save-some ()
+  (cond ((eq monky-save-some-buffers t) (save-some-buffers))
+        ((eq monky-save-some-buffers dontask) (save-some-buffers t))))
 
 (defun monky-process-indicator-from-command (comps)
   (if (monky-prefix-p (cons monky-hg-executable monky-hg-standard-options)
@@ -2580,6 +2584,7 @@ With a non numeric prefix ARG, show all entries"
 
 (defun monky-qpop (&optional patch)
   (interactive)
+  (monky-do-save-some)
   (apply #'monky-run-hg
          "qpop"
          "--config" "extensions.mq="
@@ -2587,6 +2592,7 @@ With a non numeric prefix ARG, show all entries"
 
 (defun monky-qpush (&optional patch)
   (interactive)
+  (monky-do-save-some)
   (apply #'monky-run-hg
          "qpush"
          "--config" "extensions.mq="
@@ -2604,6 +2610,7 @@ With a non numeric prefix ARG, show all entries"
 
 (defun monky-qrefresh ()
   (interactive)
+  (monky-do-save-some)
   (if (not current-prefix-arg)
       (apply #'monky-run-hg "qrefresh"
              "--config" "extensions.mq="
