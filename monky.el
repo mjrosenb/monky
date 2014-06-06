@@ -588,6 +588,12 @@ FUNC should leave point at the end of the modified region"
   (while (and (not (eobp))
               (funcall func))))
 
+(defun monky-wash-sequence-args (func &rest args)
+  "Run FUNC until end of buffer is reached.
+
+FUNC should leave point at the end of the modified region"
+  (while (and (not (eobp))
+              (apply func args))))
 (defun monky-goto-line (line)
   "Like `goto-line' but doesn't set the mark."
   (save-restriction
@@ -645,6 +651,7 @@ FUNC should leave point at the end of the modified region"
 
 (defvar monky-blame-mode-map
   (let ((map (make-keymap)))
+    (define-key map (kbd "e") 'monky-qpop-item)
     map))
 
 (defvar monky-branches-mode-map
@@ -2192,10 +2199,26 @@ With a non numeric prefix ARG, show all entries"
   :keymap monky-blame-mode-map)
 
 (defvar monky-blame-buffer-name "*monky-blame*")
+(defun monky-get-queue-range ()
+  (mapcar #'string-to-number
+          (monky-hg-lines "log" "--rev" "qtip" "--rev" "qbase" "-T" "{rev}\n")))
 
-(defun monky-present-blame-line (author changeset text)
+(defun monky-blame-mark-queue (queue number)
+  (if (/= 2 (length queue))
+      ("")  ; don't put in anything if there isn't a queue
+      (let ((qstart (nth 1 queue))
+            (qend   (nth 0 queue))
+            (n      (string-to-number number)))
+        (if (and (<= n qend)
+                 (<= qstart n))
+            "* "
+            "  "))))
+
+
+(defun monky-present-blame-line (queue author number changeset text)
   (concat author
 	  " "
+	  (monky-blame-mark-queue queue number)
 	  (propertize changeset 'face 'monky-log-sha1)
 	  ": "
 	  text))
@@ -2203,24 +2226,27 @@ With a non numeric prefix ARG, show all entries"
 (defvar monky-blame-re
   (concat
    "\\(.*\\) "               ; author
+   "\\([0-9]*\\) "           ; number
    "\\([a-f0-9]\\{12\\}\\):" ; changeset
    "\\(.*\\)$"               ; text
    ))
 
-(defun monky-wash-blame-line ()
+(defun monky-wash-blame-line (queue)
   (if (looking-at monky-blame-re)
       (let ((author (match-string 1))
-	    (changeset (match-string 2))
-	    (text (match-string 3)))
+	    (number (match-string 2))
+	    (changeset (match-string 3))
+	    (text (match-string 4)))
 	(monky-delete-line)
 	(monky-with-section changeset 'commit
-	  (insert (monky-present-blame-line author changeset text))
+	  (insert (monky-present-blame-line queue author number changeset text))
 	  (monky-set-section-info changeset)
 	  (forward-line))
 	t)))
 
 (defun monky-wash-blame ()
-  (monky-wash-sequence #'monky-wash-blame-line))
+  (let ((queue (monky-get-queue-range)))
+    (monky-wash-sequence-args #'monky-wash-blame-line queue)))
 
 (defun monky-refresh-blame-buffer (file-name)
   (monky-create-buffer-sections
@@ -2229,6 +2255,7 @@ With a non numeric prefix ARG, show all entries"
 			#'monky-wash-blame
 			"blame"
 			"--user"
+			"--number"
 			"--changeset"
 			file-name))))
 
@@ -2244,6 +2271,22 @@ With a non numeric prefix ARG, show all entries"
       (goto-char (point-min))
       (forward-line (1- lineno)))))
 
+(defun monky-get-qnames (commit-id)
+  (let ((id-string (monky-hg-string "id" "--rev" commit-id)))
+    (if (< (length id-string) 13)
+        nil
+      (remove-if-not
+       (lambda (x) (not (member x '("qtip" "tip" "qbase"))))
+       (split-string (substring
+                      id-string
+                      13)
+                     "/"))))
+  )
+(defun monky-qpop-from-commit-id (commit-id)
+    (let ((qname (nth 0 (monky-get-qnames commit-id))))
+      (if qname
+          (monky-qpop qname)
+        (message "I don't think that is a mq revision"))))
 
 
 ;;; Commit mode
@@ -2603,11 +2646,13 @@ With a non numeric prefix ARG, show all entries"
 
 (defun monky-qpush-all ()
   (interactive)
+  (monky-do-save-some)
   (monky-run-hg "qpush" "--all"
                 "--config" "extensions.mq="))
 
 (defun monky-qpop-all ()
   (interactive)
+  (monky-do-save-some)
   (monky-run-hg "qpop" "--all"
                 "--config" "extensions.mq="))
 
@@ -2734,7 +2779,9 @@ With a non numeric prefix ARG, show all entries"
      (monky-refresh-buffer))
     ((queue-staged)
      (monky-unstage-all)
-     (monky-queue-unstage-all))))
+     (monky-queue-unstage-all))
+    ((commit)
+     (monky-qpop-from-commit-id info))))
 
 (defun monky-qpush-item ()
   (interactive)
