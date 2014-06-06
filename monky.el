@@ -2236,10 +2236,13 @@ With a non numeric prefix ARG, show all entries"
   (interactive)
   (monky-with-process
     (let ((file-name (buffer-file-name))
-	  (topdir (monky-get-root-dir)))
+	  (topdir (monky-get-root-dir))
+          (lineno (line-number-at-pos (point))))
       (pop-to-buffer monky-blame-buffer-name)
       (monky-mode-init topdir 'blame #'monky-refresh-blame-buffer file-name)
-      (monky-blame-mode t))))
+      (monky-blame-mode t)
+      (goto-char (point-min))
+      (forward-line (1- lineno)))))
 
 
 
