@@ -2770,6 +2770,7 @@ With a non numeric prefix ARG, show all entries"
                 "--config" "extensions.mq="))
 
 (defun monky-qnew (patch)
+  (monky-do-save-some)
   (interactive (list (read-string "Patch Name : ")))
   (if (not current-prefix-arg)
       (monky-run-hg "qnew" patch
