@@ -2723,7 +2723,7 @@ With a non numeric prefix ARG, show all entries"
          (if patch (list patch) '())))
 
 (defun monky-qpush-fail-check (&optional ignore)
-  (if (and ignore (get-buffer monky-qpush-fail-buffer-name))
+  (if (and (not ignore) (get-buffer monky-qpush-fail-buffer-name))
       (error "You still have a qpush-fail buffer!  If you have any unresolved conflicts, this can end poorly")))
 
 (defun monky-qpush (&optional patch ignore-prev-fail)
