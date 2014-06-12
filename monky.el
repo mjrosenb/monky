@@ -654,6 +654,10 @@ FUNC should leave point at the end of the modified region"
     (define-key map (kbd "e") 'monky-qpop-item)
     map))
 
+(defvar monky-qpush-fail-mode-map
+  (let ((map (make-keymap)))
+    map))
+
 (defvar monky-branches-mode-map
   (let ((map (make-keymap)))
     (define-key map (kbd "C") 'monky-checkout-item)
@@ -1157,6 +1161,14 @@ IF FLAG-OR-FUNC is a Boolean value, the section will be hidden if its true, show
                               monky-hg-standard-options)
                         args))))
 
+(defun monky-run-hg-stderr (&rest args)
+  (monky-with-refresh
+    (if (monky-run* (append (cons monky-hg-executable
+                              monky-hg-standard-options)
+                        args) nil nil t)
+        nil
+      monky-cmd-error-message)))
+
 (defun monky-run-hg-async (&rest args)
   (message "Running %s %s"
            monky-hg-executable
@@ -1266,7 +1278,9 @@ With a prefix argument, visit in other window."
       ((longer)
        (monky-log-show-more-entries))
       ((queue)
-       (monky-qqueue info)))))
+       (monky-qqueue info))
+      ((qpush-rej)
+       (monky-view-qpush-rej info)))))
 
 (defun monky-stage-all ()
   "Add all items in Changes to the staging area."
@@ -2417,6 +2431,75 @@ With a non numeric prefix ARG, show all entries"
      (monky-checkout info))
     ((log commits commit)
      (monky-checkout info))))
+;;; Qpush-fail mode
+
+(defvar monky-qpush-fail-buffer-name "*qpush-fail*")
+(defvar monky-qpush-fail-filelist nil)
+
+(define-minor-mode monky-qpush-fail-mode
+  "Minor mode for hg qpush failures.
+
+\\{monky-qpush-fail-mode-map}"
+  :group monky
+  :init-value ()
+  :lighter ()
+  :keymap monky-qpush-fail-mode-map)
+
+(defvar monky-qpush-fail-re
+  (concat
+   "[0-9]* out of [0-9]* hunks FAILED -- saving rejects to file " ; flavor text
+   "\\(.*\\)$"                                                    ; place where rejects were saved
+))
+(defun monky-qpush-fail-sigil (file)
+  (let ((state (car file)))
+    (cond ((eq state 'visited)  "*")
+          ((eq state 'new)      " ")
+          ((eq state 'finished) "X")
+          (t                    "?"))))
+
+(defun monky-present-qpush-fail-line (file)
+  (concat
+   (monky-qpush-fail-sigil file)
+   " "
+   (propertize (nth 1 file) 'face 'monky-queue-patch)
+   "\n"))
+
+(defun monky-wash-qpush-fail-line (file)
+  (monky-with-section file 'qpush-rej
+    (insert (monky-present-qpush-fail-line file))
+    (monky-set-section-info file)))
+
+(defun monky-wash-qpush-fail ()
+    (mapcar #'monky-wash-qpush-fail-line monky-qpush-fail-filelist))
+
+(defun monky-refresh-qpush-fail-buffer (msg)
+  (monky-create-buffer-sections
+    (monky-with-section "qpush fail" 'qpush-fail
+      (progn
+        (goto-char 0)
+        (monky-wash-qpush-fail)))))
+
+(defun monky-parse-qpush-fail (msg)
+  (let ((cur-start 0))
+    (while (string-match monky-qpush-fail-re msg (+ 1 cur-start))
+      (setq cur-start (match-end 0))
+      (let ((new-file (match-string 1 msg)))
+        (setq monky-qpush-fail-filelist
+              (cons (list 'new new-file) monky-qpush-fail-filelist))))))
+
+
+(defun monky-handle-qpush-fail (msg)
+  (pop-to-buffer monky-qpush-fail-buffer-name)
+  (monky-parse-qpush-fail msg)
+  (monky-mode-init (monky-get-root-dir) 'qpush-fail #'monky-refresh-qpush-fail-buffer nil)
+  (monky-qpush-fail-mode t)
+)
+
+
+(defun monky-view-qpush-rej (info)
+  (setcar info 'visited)
+  (monky-refresh-qpush-fail-buffer nil)
+  (find-file (concat (monky-get-root-dir) (nth 1 info))))
 
 ;;; Queue mode
 (define-minor-mode monky-queue-mode
@@ -2636,16 +2719,25 @@ With a non numeric prefix ARG, show all entries"
          "--config" "extensions.mq="
          (if patch (list patch) '())))
 
-(defun monky-qpush (&optional patch)
-  (interactive)
-  (monky-do-save-some)
-  (apply #'monky-run-hg
-         "qpush"
-         "--config" "extensions.mq="
-         (if patch (list patch) '())))
+(defun monky-qpush-fail-check (&optional ignore)
+  (if (and ignore (get-buffer monky-qpush-fail-buffer-name))
+      (error "You still have a qpush-fail buffer!  If you have any unresolved conflicts, this can end poorly")))
 
-(defun monky-qpush-all ()
+(defun monky-qpush (&optional patch ignore-prev-fail)
   (interactive)
+  (monky-qpush-fail-check ignore-prev-fail)
+  (monky-do-save-some)
+  (let ((ret (apply #'monky-run-hg-stderr
+             "qpush"
+             "--config" "extensions.mq="
+             (if patch (list patch) '()))))
+      (if ret
+          (monky-handle-qpush-fail ret)
+        t)))
+
+(defun monky-qpush-all (&optional ignore-prev-fail)
+  (interactive)
+  (monky-qpush-fail-check ignore-prev-fail)
   (monky-do-save-some)
   (monky-run-hg "qpush" "--all"
                 "--config" "extensions.mq="))
@@ -2783,13 +2875,13 @@ With a non numeric prefix ARG, show all entries"
     ((commit)
      (monky-qpop-from-commit-id info))))
 
-(defun monky-qpush-item ()
-  (interactive)
+(defun monky-qpush-item (arg)
+  (interactive "P")
   (monky-section-action (item info "qpush")
     ((unapplied patch)
-     (monky-qpush info))
+     (monky-qpush info arg))
     ((unapplied)
-     (monky-qpush-all))
+     (monky-qpush-all arg))
     ((untracked file)
      (monky-run-hg "add" info))
     ((untracked)
