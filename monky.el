@@ -2214,12 +2214,15 @@ With a non numeric prefix ARG, show all entries"
 
 (defvar monky-blame-buffer-name "*monky-blame*")
 (defun monky-get-queue-range ()
-  (mapcar #'string-to-number
-          (monky-hg-lines "log" "--rev" "qtip" "--rev" "qbase" "-T" "{rev}\n")))
+  (let ((ret (mapcar #'string-to-number
+                     (monky-hg-lines "log" "--rev" "qtip" "--rev" "qbase" "-T" "{rev}\n"))))
+    (if (= (length ret) 1)
+        (list (car ret) (car ret))
+      ret)))
 
 (defun monky-blame-mark-queue (queue number)
   (if (/= 2 (length queue))
-      ("")  ; don't put in anything if there isn't a queue
+      ""  ; don't put in anything if there isn't a queue
       (let ((qstart (nth 1 queue))
             (qend   (nth 0 queue))
             (n      (string-to-number number)))
